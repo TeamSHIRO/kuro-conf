@@ -16,7 +16,9 @@
 #define K_MAGIC4 0x4F // O
 
 #define MAGIC_SIZE 5
-#define K_CURRENT_VERSION 1
+
+#define K_VERSION_1 1
+#define K_VERSION_UNSUPPORTED 0
 
 // clang-format off
 #define KURO_ASCII                                                                                                     \
@@ -26,6 +28,9 @@
     "                            ⠀⠀⠀⠛⠛⠛⠓⠀C⠀\n"                                                                         \
     "                            ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"
 // clang-format on
+
+#define DEFAULT_CONFIG_CONTENT                                                                                         \
+    "VERSION=2\nHAS_PUBLIC_KEY=1\nASLR_ENABLED=1\nPUBLIC_KEY=kernel.pub\nEXECUTABLE_PATH=kernel.bin\n"
 
 typedef struct {
     char k_magic0;

@@ -12,6 +12,27 @@
 #include "gh.h"
 #include "logger.h"
 
+int mkconf(const char *config_path) {
+    if (config_path == NULL) {
+        if (write_file("kuro.conf", (const unsigned char *) DEFAULT_CONFIG_CONTENT, strlen(DEFAULT_CONFIG_CONTENT)) !=
+            0) {
+            k_error("Failed to create configuration file.");
+            return 1;
+        }
+    } else {
+        if (write_file(config_path, (const unsigned char *) DEFAULT_CONFIG_CONTENT, strlen(DEFAULT_CONFIG_CONTENT)) !=
+            0) {
+            k_error("Failed to create configuration file.");
+            return 1;
+        }
+    }
+
+    k_success("Configuration file created successfully.");
+
+    return 0;
+}
+
+// NOLINTNEXTLINE
 int decode_kuro_config_file(const char *config_path, KuroConfig *config) {
     size_t file_size = 0;
     char *file_buffer = read_whole_file(config_path, &file_size);
@@ -38,7 +59,34 @@ int decode_kuro_config_file(const char *config_path, KuroConfig *config) {
         char *key = line;
         char *value = eq + 1;
 
-        if (strcmp(key, "HAS_PUBLIC_KEY") == 0) {
+        // Trim leading/trailing whitespace from key
+        while (*key == ' ' || *key == '\t') {
+            key++;
+        }
+        char *key_end = key + strlen(key) - 1;
+        while (key_end > key && (*key_end == ' ' || *key_end == '\t')) {
+            *key_end = '\0';
+            key_end--;
+        }
+        // Trim leading/trailing whitespace from value
+        while (*value == ' ' || *value == '\t') {
+            value++;
+        }
+        char *value_end = value + strlen(value) - 1;
+        while (value_end > value && (*value_end == ' ' || *value_end == '\t')) {
+            *value_end = '\0';
+            value_end--;
+        }
+
+        if (strcmp(key, "VERSION") == 0) {
+            char *endptr;
+            long val = strtol(value, &endptr, DECIMAL_BASE);
+            if (*endptr != '\0') {
+                k_error("Invalid integer value for VERSION: %s", value);
+                return 1;
+            }
+            config->identifier.k_version = (int) val;
+        } else if (strcmp(key, "HAS_PUBLIC_KEY") == 0) {
             char *endptr;
             long val = strtol(value, &endptr, DECIMAL_BASE);
             if (*endptr != '\0') {
@@ -156,6 +204,7 @@ void print_usage() {
     printf(A_BOLD "Commands:\n" A_RESET);
     printf("  read    Read the configuration of the KURO UEFI bootloader\n");
     printf("  edit    Edit the configuration of the KURO UEFI bootloader with a .conf file\n");
+    printf("  mkconf  Create a new template configuration file for the KURO UEFI bootloader\n");
     printf("  help    Display this help message\n");
     printf(A_BOLD "Options:\n" A_RESET);
     printf("  -c --config      <file>    Specify the configuration file to use\n");
@@ -196,7 +245,6 @@ int edit_config(const char *bootloader_path, const char *config_file) {
     config.identifier.k_magic3 = K_MAGIC3;
     config.identifier.k_magic4 = K_MAGIC4;
 
-    config.identifier.k_version = K_CURRENT_VERSION;
     config.identifier.k_reserved = 0;
 
     FILE *fptr = NULL;
@@ -271,7 +319,7 @@ int read_config(const char *bootloader_path) {
     }
     printf("\n");
     printf("  Version:            %d", config.identifier.k_version);
-    if (config.identifier.k_version == K_CURRENT_VERSION) {
+    if (config.identifier.k_version == K_VERSION_1) {
         printf(T_GREEN A_BOLD "                ⬤ stable" A_RESET);
     } else {
         printf(T_RED A_BOLD "                ⬤ invalid" A_RESET);
@@ -338,6 +386,10 @@ int main(int argc, char *argv[]) {
             print_usage();
         } else if (strcmp((const char *) command, "read") == 0) {
             if (read_config(bootloader_path) != 0) {
+                return 1;
+            }
+        } else if (strcmp((const char *) command, "mkconf") == 0) {
+            if (mkconf(config_file) != 0) {
                 return 1;
             }
         } else {
