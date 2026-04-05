@@ -70,12 +70,12 @@ kuro-conf read KUROX64.EFI
 
 **HAS_PUBLIC_KEY**: Specifies if the public key is present and if the KURO Bootloader should verify the kernel's signature using the public key.
 
-> ![WARNING]
+> [!WARNING]
 > Enabling this feature is strongly recommended for security purposes. Disabling it may compromise the security of your system.
 
 **ASLR_ENABLED**: Specifies if Address Space Layout Randomization (ASLR) is enabled for the KURO Bootloader.
 
-> ![WARNING]
+> [!WARNING]
 > Enabling this feature is strongly recommended for security purposes. Disabling it may compromise the security of your system.
 
 **PUBLIC_KEY**: Specifies the binary-formatted public key file used by the KURO Bootloader to verify the kernel's signature. This argument may be omitted if the `HAS_PUBLIC_KEY` feature is disabled.
