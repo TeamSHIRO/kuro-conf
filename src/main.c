@@ -11,6 +11,7 @@
 #include "file.h"
 #include "gh.h"
 #include "logger.h"
+#include "kuro_conf.h"
 
 int mkconf(const char *config_path) {
     if (config_path == NULL) {
@@ -86,14 +87,14 @@ int decode_kuro_config_file(const char *config_path, KuroConfig *config) {
                 return 1;
             }
             config->identifier.k_version = (int) val;
-        } else if (strcmp(key, "HAS_PUBLIC_KEY") == 0) {
+        } else if (strcmp(key, "SECURE_MODE") == 0) {
             char *endptr;
             long val = strtol(value, &endptr, DECIMAL_BASE);
             if (*endptr != '\0') {
-                k_error("Invalid integer value for HAS_PUBLIC_KEY: %s", value);
+                k_error("Invalid integer value for SECURE_MODE: %s", value);
                 return 1;
             }
-            config->has_public_key = (int) val;
+            config->secure_mode = (uint8_t) val;
         } else if (strcmp(key, "ASLR_ENABLED") == 0) {
             char *endptr;
             long val = strtol(value, &endptr, DECIMAL_BASE);
@@ -101,7 +102,23 @@ int decode_kuro_config_file(const char *config_path, KuroConfig *config) {
                 k_error("Invalid integer value for ASLR_ENABLED: %s", value);
                 return 1;
             }
-            config->aslr_enabled = (int) val;
+            config->aslr_enabled = (uint8_t) val;
+        } else if (strcmp(key, "LOG_LEVEL") == 0) {
+            char *endptr;
+            long val = strtol(value, &endptr, DECIMAL_BASE);
+            if (*endptr != '\0') {
+                k_error("Invalid integer value for LOG_LEVEL: %s", value);
+                return 1;
+            }
+            config->log_level = (uint8_t) val;
+        } else if (strcmp(key, "CONSOLE_LOG_LEVEL") == 0) {
+            char *endptr;
+            long val = strtol(value, &endptr, DECIMAL_BASE);
+            if (*endptr != '\0') {
+                k_error("Invalid integer value for CONSOLE_LOG_LEVEL: %s", value);
+                return 1;
+            }
+            config->console_log_level = (uint8_t) val;
         } else if (strcmp(key, "PUBLIC_KEY") == 0) {
             size_t pkey_file_size = 0;
             char *pkey_file_buffer = read_whole_file(value, &pkey_file_size);
@@ -109,12 +126,9 @@ int decode_kuro_config_file(const char *config_path, KuroConfig *config) {
                 k_error("Failed to read public key file \"%s\": %s (Error code: %d)", value, strerror(errno), errno);
                 return 1;
             }
-            strncpy(config->public_key, pkey_file_buffer, PUBLIC_KEY_SIZE - 1);
-            config->public_key[PUBLIC_KEY_SIZE - 1] = '\0';
+            size_t copy_len = pkey_file_size < PUBLIC_KEY_SIZE ? pkey_file_size : PUBLIC_KEY_SIZE;
+            memcpy(config->public_key, pkey_file_buffer, copy_len);
             free(pkey_file_buffer);
-        } else if (strcmp(key, "EXECUTABLE_PATH") == 0) {
-            strncpy(config->executable_path, value, EXECUTABLE_PATH_SIZE - 1);
-            config->executable_path[EXECUTABLE_PATH_SIZE - 1] = '\0';
         } else {
             k_error("kuro-conf.parsingError: Unknown config key: %s", key);
             return 1;
@@ -233,19 +247,15 @@ int edit_config(const char *bootloader_path, const char *config_file) {
         return 1;
     }
 
+    static const uint8_t K_MAGIC[KURO_MAGIC_LEN] = KURO_MAGIC;
+
     int footer_exists = (get_config_footer(bootloader_path, &footer) == 0) &&
-                        (footer.identifier.k_magic0 == K_MAGIC0 && footer.identifier.k_magic1 == K_MAGIC1 &&
-                         footer.identifier.k_magic2 == K_MAGIC2 && footer.identifier.k_magic3 == K_MAGIC3 &&
-                         footer.identifier.k_magic4 == K_MAGIC4);
+                        (memcmp(footer.identifier.k_magic, K_MAGIC, KURO_MAGIC_LEN) == 0);
 
     // Set magic values in config footer
-    config.identifier.k_magic0 = K_MAGIC0;
-    config.identifier.k_magic1 = K_MAGIC1;
-    config.identifier.k_magic2 = K_MAGIC2;
-    config.identifier.k_magic3 = K_MAGIC3;
-    config.identifier.k_magic4 = K_MAGIC4;
+    memcpy(config.identifier.k_magic, K_MAGIC, KURO_MAGIC_LEN);
 
-    config.identifier.k_reserved = 0;
+    memset(config.identifier.k_reserved, 0, sizeof(config.identifier.k_reserved));
 
     FILE *fptr = NULL;
     if (footer_exists) {
@@ -305,30 +315,39 @@ int read_config(const char *bootloader_path) {
         k_error("Failed to read configuration from bootloader binary \"%s\"", bootloader_path);
         return 1;
     }
+    static const uint8_t K_MAGIC[KURO_MAGIC_LEN] = KURO_MAGIC;
+
     printf("Bootloader identifier:\n");
     printf("  Magic:              ");
     for (int i = 0; i < MAGIC_SIZE; i++) {
-        printf("%02X ", ((uint8_t *) &config.identifier)[i]);
+        printf("%02X ", (uint8_t) config.identifier.k_magic[i]);
     }
-    if (config.identifier.k_magic0 == K_MAGIC0 && config.identifier.k_magic1 == K_MAGIC1 &&
-        config.identifier.k_magic2 == K_MAGIC2 && config.identifier.k_magic3 == K_MAGIC3 &&
-        config.identifier.k_magic4 == K_MAGIC4) {
+    if (memcmp(config.identifier.k_magic, K_MAGIC, KURO_MAGIC_LEN) == 0) {
         printf(T_GREEN A_BOLD "  ⬤ valid" A_RESET);
     } else {
         printf(T_RED A_BOLD "  ⬤ invalid" A_RESET);
     }
     printf("\n");
     printf("  Version:            %d", config.identifier.k_version);
-    if (config.identifier.k_version == K_VERSION_1) {
+    if (config.identifier.k_version == KURO_CONFIG_VERSION_1) {
         printf(T_GREEN A_BOLD "                ⬤ stable" A_RESET);
     } else {
         printf(T_RED A_BOLD "                ⬤ invalid" A_RESET);
     }
     printf("\n");
-    printf("  Reserved:           %d\n", config.identifier.k_reserved);
+    printf("  Reserved:           %02X %02X\n", (uint8_t) config.identifier.k_reserved[0],
+           (uint8_t) config.identifier.k_reserved[1]);
+
+    int has_public_key = 0;
+    for (int i = 0; i < PUBLIC_KEY_SIZE; i++) {
+        if (config.public_key[i] != 0) {
+            has_public_key = 1;
+            break;
+        }
+    }
 
     printf("Bootloader configuration:\n");
-    if (config.has_public_key) {
+    if (has_public_key) {
         printf("  Public key:         ");
 
         for (int i = 0; i < PUBLIC_KEY_SIZE; i++) {
@@ -336,14 +355,20 @@ int read_config(const char *bootloader_path) {
                 printf("\n                      ");
             }
 
-            printf("%02X ", ((uint8_t *) &config.public_key)[i]);
-            ;
+            printf("%02X ", config.public_key[i]);
             if (i == HEX_COLS - 1) {
                 printf(T_GREEN A_BOLD "  ⬤ enabled" A_RESET);
             }
         }
     } else {
         printf("  Public key:         " T_YELLOW A_BOLD "                 ⬤ disabled" A_RESET);
+    }
+    printf("\n");
+    printf("  Secure mode:                         ");
+    if (config.secure_mode) {
+        printf(T_GREEN A_BOLD "⬤ enabled" A_RESET);
+    } else {
+        printf(T_YELLOW A_BOLD "⬤ disabled" A_RESET);
     }
     printf("\n");
     printf("  ASLR:                                ");
@@ -353,9 +378,9 @@ int read_config(const char *bootloader_path) {
         printf(T_YELLOW A_BOLD "⬤ disabled" A_RESET);
     }
     printf("\n");
-    // Print "Executable path" aligned with previous labels
-    const char *label = "  Executable path:";
-    printf("%-*s %s\n", LABEL_WIDTH, label, config.executable_path);
+    printf("  Log level:          %d\n", config.log_level);
+    printf("  Console log level:  %d\n", config.console_log_level);
+    printf("  String offset:      0x%08X\n", config.str_offset);
 
     return 0;
 }
