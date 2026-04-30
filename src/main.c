@@ -129,15 +129,17 @@ int decode_kuro_config_file(
             }
             config->console_log_level = (uint8_t) val;
         } else if (strcmp(key, "PUBLIC_KEY") == 0) {
-            size_t pkey_file_size = 0;
-            char *pkey_file_buffer = read_whole_file(value, &pkey_file_size);
-            if (pkey_file_buffer == NULL) {
-                k_error("Failed to read public key file \"%s\": %s (Error code: %d)", value, strerror(errno), errno);
-                return 1;
+            if (config->secure_mode == 1) {
+                size_t pkey_file_size = 0;
+                char *pkey_file_buffer = read_whole_file(value, &pkey_file_size);
+                if (pkey_file_buffer == NULL) {
+                    k_error("Failed to read public key file \"%s\": %s (Error code: %d)", value, strerror(errno), errno);
+                    return 1;
+                }
+                size_t copy_len = pkey_file_size < PUBLIC_KEY_SIZE ? pkey_file_size : PUBLIC_KEY_SIZE;
+                memcpy(config->public_key, pkey_file_buffer, copy_len);
+                free(pkey_file_buffer);
             }
-            size_t copy_len = pkey_file_size < PUBLIC_KEY_SIZE ? pkey_file_size : PUBLIC_KEY_SIZE;
-            memcpy(config->public_key, pkey_file_buffer, copy_len);
-            free(pkey_file_buffer);
         } else if (strcmp(key, "EXEC_PATH") == 0) {
             *exec_path = strdup(value);
             if (*exec_path == NULL) {
