@@ -59,10 +59,11 @@ typedef struct {
 typedef struct {
     uint8_t secure_mode;
     uint8_t aslr_enabled;
-    uint8_t public_key[32];
+    uint8_t public_key[PUBLIC_KEY_SIZE];
     uint8_t log_level;
     uint8_t console_log_level;
     uint32_t str_offset;
+
     KuroConfigIdentifier identifier;
 } KuroConfig;
 

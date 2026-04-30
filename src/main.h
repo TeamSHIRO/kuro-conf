@@ -19,6 +19,14 @@
 // clang-format on
 
 #define DEFAULT_CONFIG_CONTENT                                                                                         \
-    "VERSION=1\nSECURE_MODE=0\nASLR_ENABLED=1\nLOG_LEVEL=3\nCONSOLE_LOG_LEVEL=3\nPUBLIC_KEY=kernel.pub\n"
+    "VERSION=1\n"             \
+    "SECURE_MODE=1\n"         \
+    "ASLR_ENABLED=1\n"        \
+    "LOG_LEVEL=1\n"           \
+    "CONSOLE_LOG_LEVEL=0\n"   \
+    "PUBLIC_KEY=\n" \
+    "EXEC_PATH=\n"     \
+    "MODULE_PATH=\n"          \
+    "ARGS=\n"
 
 #endif // MAIN_H

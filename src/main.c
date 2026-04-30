@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "main.h"
 
 #include <errno.h>
@@ -6,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "ansi.h"
 #include "file.h"
@@ -34,7 +37,13 @@ int mkconf(const char *config_path) {
 }
 
 // NOLINTNEXTLINE
-int decode_kuro_config_file(const char *config_path, KuroConfig *config) {
+int decode_kuro_config_file(
+    const char *config_path,
+    KuroConfig *config,
+    char **exec_path,
+    char **module_path,
+    char **args
+) {
     size_t file_size = 0;
     char *file_buffer = read_whole_file(config_path, &file_size);
     if (file_buffer == NULL) {
@@ -129,6 +138,24 @@ int decode_kuro_config_file(const char *config_path, KuroConfig *config) {
             size_t copy_len = pkey_file_size < PUBLIC_KEY_SIZE ? pkey_file_size : PUBLIC_KEY_SIZE;
             memcpy(config->public_key, pkey_file_buffer, copy_len);
             free(pkey_file_buffer);
+        } else if (strcmp(key, "EXEC_PATH") == 0) {
+            *exec_path = strdup(value);
+            if (*exec_path == NULL) {
+                k_error("Failed to allocate memory for EXEC_PATH");
+                return 1;
+            }
+        } else if (strcmp(key, "MODULE_PATH") == 0) {
+            *module_path = strdup(value);
+            if (*module_path == NULL) {
+                k_error("Failed to allocate memory for MODULE_PATH");
+                return 1;
+            }
+        } else if (strcmp(key, "ARGS") == 0) {
+            *args = strdup(value);
+            if (*args == NULL) {
+                k_error("Failed to allocate memory for ARGS");
+                return 1;
+            }
         } else {
             k_error("kuro-conf.parsingError: Unknown config key: %s", key);
             return 1;
@@ -242,8 +269,14 @@ int edit_config(const char *bootloader_path, const char *config_file) {
         return 1;
     }
 
-    if (decode_kuro_config_file(config_file, &config) != 0) {
+    char *exec_path = NULL;
+    char *module_path = NULL;
+    char *args = NULL;
+    if (decode_kuro_config_file(config_file, &config, &exec_path, &module_path, &args) != 0) {
         k_error("Failed to decode configuration file: %s", config_file);
+        free(exec_path);
+        free(module_path);
+        free(args);
         return 1;
     }
 
@@ -257,54 +290,128 @@ int edit_config(const char *bootloader_path, const char *config_file) {
 
     memset(config.identifier.k_reserved, 0, sizeof(config.identifier.k_reserved));
 
+    // Build the string table: exec_path\0module_path\0args\0
+    const char *ep = exec_path ? exec_path : "";
+    const char *mp = module_path ? module_path : "";
+    const char *ag = args ? args : "";
+    size_t ep_len = strlen(ep) + 1;
+    size_t mp_len = strlen(mp) + 1;
+    size_t ag_len = strlen(ag) + 1;
+    size_t str_table_size = ep_len + mp_len + ag_len;
+
+    char *str_table = malloc(str_table_size);
+    if (str_table == NULL) {
+        k_error("Failed to allocate memory for string table");
+        free(exec_path);
+        free(module_path);
+        free(args);
+        return 1;
+    }
+    memcpy(str_table, ep, ep_len);
+    memcpy(str_table + ep_len, mp, mp_len);
+    memcpy(str_table + ep_len + mp_len, ag, ag_len);
+
+    config.str_offset = (uint32_t) str_table_size;
+
     FILE *fptr = NULL;
     if (footer_exists) {
-        // Overwrite the existing footer
-        fptr = fopen(bootloader_path, "rb+");
+        // Truncate the file back past the old string table and footer, then rewrite both
+        fptr = fopen(bootloader_path, "rb");
         if (fptr == NULL) {
-            k_error("Failed to open bootloader binary \"%s\" for updating: %s (Error code: %d)", bootloader_path,
+            k_error("Failed to open bootloader binary \"%s\": %s (Error code: %d)", bootloader_path,
                     strerror(errno), errno);
+            free(str_table);
             return 1;
         }
-        if (fseek(fptr, -(long) sizeof(KuroConfig), SEEK_END) != 0) {
-            k_error("Failed to seek to footer in bootloader binary \"%s\": %s (Error code: %d)", bootloader_path,
+        if (fseek(fptr, 0, SEEK_END) != 0) {
+            k_error("Failed to seek in bootloader binary \"%s\": %s (Error code: %d)", bootloader_path,
                     strerror(errno), errno);
             (void) fclose(fptr);
+            free(str_table);
+            return 1;
+        }
+        long file_size = ftell(fptr);
+        (void) fclose(fptr);
+        if (file_size < 0) {
+            k_error("Failed to get file size of \"%s\": %s (Error code: %d)", bootloader_path,
+                    strerror(errno), errno);
+            free(str_table);
+            return 1;
+        }
+        long truncate_pos = file_size - (long) sizeof(KuroConfig) - (long) footer.str_offset;
+        if (truncate_pos < 0) {
+            truncate_pos = 0;
+        }
+        if (truncate(bootloader_path, (off_t) truncate_pos) != 0) {
+            k_error("Failed to truncate bootloader binary \"%s\": %s (Error code: %d)", bootloader_path,
+                    strerror(errno), errno);
+            free(str_table);
+            return 1;
+        }
+        fptr = fopen(bootloader_path, "ab");
+        if (fptr == NULL) {
+            k_error("Failed to open bootloader binary \"%s\" for appending: %s (Error code: %d)", bootloader_path,
+                    strerror(errno), errno);
+            free(str_table);
+            return 1;
+        }
+        if (fwrite(str_table, 1, str_table_size, fptr) != str_table_size) {
+            k_error("Failed to write string table to bootloader binary \"%s\": %s (Error code: %d)", bootloader_path,
+                    strerror(errno), errno);
+            (void) fclose(fptr);
+            free(str_table);
             return 1;
         }
         if (fwrite(&config, sizeof(KuroConfig), 1, fptr) != 1) {
             k_error("Failed to overwrite footer in bootloader binary \"%s\": %s (Error code: %d)", bootloader_path,
                     strerror(errno), errno);
             (void) fclose(fptr);
+            free(str_table);
             return 1;
         }
         if (fclose(fptr) != 0) {
             k_error("Failed to close bootloader binary \"%s\": %s (Error code: %d)", bootloader_path, strerror(errno),
                     errno);
+            free(str_table);
             return 1;
         }
         k_success("KURO Footer overwritten in \"%s\"", bootloader_path);
     } else {
-        // Append new footer
+        // Append string table then footer
         fptr = fopen(bootloader_path, "ab");
         if (fptr == NULL) {
             k_error("Failed to open bootloader binary \"%s\" for writing: %s (Error code: %d)", bootloader_path,
                     strerror(errno), errno);
+            free(str_table);
+            return 1;
+        }
+        if (fwrite(str_table, 1, str_table_size, fptr) != str_table_size) {
+            k_error("Failed to write string table to bootloader binary \"%s\": %s (Error code: %d)", bootloader_path,
+                    strerror(errno), errno);
+            (void) fclose(fptr);
+            free(str_table);
             return 1;
         }
         if (fwrite(&config, sizeof(KuroConfig), 1, fptr) != 1) {
             k_error("Failed to write footer to bootloader binary \"%s\": %s (Error code: %d)", bootloader_path,
                     strerror(errno), errno);
             (void) fclose(fptr);
+            free(str_table);
             return 1;
         }
         if (fclose(fptr) != 0) {
             k_error("Failed to close bootloader binary \"%s\": %s (Error code: %d)", bootloader_path, strerror(errno),
                     errno);
+            free(str_table);
             return 1;
         }
         k_success("KURO Footer appended to \"%s\"", bootloader_path);
     }
+
+    free(str_table);
+    free(exec_path);
+    free(module_path);
+    free(args);
 
     return 0;
 }
